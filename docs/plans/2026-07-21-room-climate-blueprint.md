@@ -432,11 +432,11 @@ $instances = @(
   @{ id = 'roomclimate_margaret'; alias = "Room Climate: Margaret's Room"
      dial = 'climate.zen_within_zen_01_1d6f1200_fan_thermostat'
      splits = @('climate.air_conditioner_margaret_margaret_air_conditioner')
-     boost = 'input_number.climate_offset_margaret'; idle = 'off' },
+     boost = 'input_number.climate_offset_margaret'; idle = 'fan_only' },   # user preference post-rollout
   @{ id = 'roomclimate_master'; alias = 'Room Climate: Master Bedroom'
      dial = 'climate.master_bedroom_thermostat_fan_thermostat'
      splits = @('climate.master_bedroom_climate')
-     boost = 'input_number.climate_offset_master'; idle = 'off' },
+     boost = 'input_number.climate_offset_master'; idle = 'fan_only' },   # user preference post-rollout
   @{ id = 'roomclimate_main_floor'; alias = 'Room Climate: Main Floor'
      dial = 'climate.living_room_livingroomthermostat_climate'
      splits = @('climate.main_floor_east', 'climate.main_floor_west')
