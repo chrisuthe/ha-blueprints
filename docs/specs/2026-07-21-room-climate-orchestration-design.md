@@ -112,6 +112,16 @@ never moves. Offsets are written only by per-room "Climate Offset" glue automati
   windows take precedence over setback in the glue automation's choose ordering.
 - Main floor has no warm-up; setback only.
 
+## Cooling fan-speed ladder (amended 2026-07-21 after rollout)
+
+While cooling, fan speed scales with how far the room is from the effective target
+(`gap = room − (dial + offset)`): gap ≤ `fan_auto_band` (default 1.5°) → `auto`;
+then stepping every `fan_step` (default 1.0°) through `medium` → `high` → `Turbo`.
+Applies on entry too (starting far away = starting fast). Outside cooling the fan
+is normalized back to `auto` (a Turbo catch-up must never leave a loud idle fan),
+and fan commands are only sent when the unit's current fan mode differs. Heating
+is deliberately excluded from the ladder.
+
 ## Status visibility (amended 2026-07-21 after pilot)
 
 The blueprint writes its decision to a per-room `input_text`

@@ -83,6 +83,26 @@ blueprint:
           min: 40
           max: 80
           step: 1
+    fan_auto_band:
+      name: Fan auto band (°F)
+      description: While cooling, fan stays on auto when the room is within this many degrees of the effective target.
+      default: 1.5
+      selector:
+        number:
+          min: 0.5
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°F"
+    fan_step:
+      name: Fan ladder step (°F)
+      description: Each additional step of gap beyond the auto band raises the fan one tier (medium → high → Turbo).
+      default: 1.0
+      selector:
+        number:
+          min: 0.5
+          max: 3
+          step: 0.5
+          unit_of_measurement: "°F"
     calibration_offset:
       name: Calibration offset (°F)
       description: Measured disagreement between the minisplit head sensor and the wall thermostat; added to the commanded heat target.
@@ -148,6 +168,8 @@ actions:
       hp_max: !input hp_outdoor_max
       cal: !input calibration_offset
       idle_mode: !input idle_mode
+      fan_auto_band: !input fan_auto_band
+      fan_step: !input fan_step
       dial: "{{ state_attr(dial_entity, 'temperature') }}"
       room: "{{ state_attr(dial_entity, 'current_temperature') }}"
       outdoor: "{{ state_attr(weather_ent, 'temperature') }}"
@@ -178,12 +200,23 @@ actions:
           {{ [ [ eff + hp_offset | float + cal | float, 62.5 ] | max, 86 ] | min }}
         {%- else -%} 0
         {%- endif -%}
+      head_fan: "{{ state_attr(head, 'fan_mode') }}"
+      desired_fan: >-
+        {%- if desired_mode == 'cool' -%}
+          {%- set gap = room | float - eff -%}
+          {%- if gap <= fan_auto_band | float -%} auto
+          {%- elif gap <= fan_auto_band | float + fan_step | float -%} medium
+          {%- elif gap <= fan_auto_band | float + 2 * fan_step | float -%} high
+          {%- else -%} Turbo
+          {%- endif -%}
+        {%- else -%} auto
+        {%- endif -%}
   - action: input_text.set_value
     target:
       entity_id: !input status_helper
     data:
       value: >-
-        {{ desired_mode }}{% if desired_mode in ['cool', 'heat'] %} → {{ desired_target }}{% endif %}
+        {{ desired_mode }}{% if desired_mode in ['cool', 'heat'] %} → {{ desired_target }}{% endif %}{% if desired_mode == 'cool' %} fan {{ desired_fan }}{% endif %}
         | room {{ room }} dial {{ dial }}{% if offset != 0 %} ({{ '%+.1f' | format(offset) }}){% endif %} out {{ outdoor }}
         | {{ now().strftime('%H:%M') }}
   - choose:
@@ -234,3 +267,10 @@ actions:
               entity_id: !input minisplits
             data:
               hvac_mode: "{{ idle_mode }}"
+  - if: "{{ head_fan != desired_fan }}"
+    then:
+      - action: climate.set_fan_mode
+        target:
+          entity_id: !input minisplits
+        data:
+          fan_mode: "{{ desired_fan }}"
