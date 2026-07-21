@@ -22,12 +22,18 @@ blueprint:
         entity:
           domain: climate
           multiple: true
-    boost_helper:
-      name: Boost helper
-      description: input_number added to the heat entry threshold and heat target (morning warm-ups). Stays 0 when unused.
+    offset_helper:
+      name: Offset helper
+      description: input_number (−5…+5) shifting the room's effective target; written by schedule/warm-up glue automations. Stays 0 when unused.
       selector:
         entity:
           domain: input_number
+    status_helper:
+      name: Status helper
+      description: input_text this automation writes its decision to on every evaluation.
+      selector:
+        entity:
+          domain: input_text
     weather_entity:
       name: Weather source
       default: weather.pirateweather
@@ -113,7 +119,7 @@ triggers:
     entity_id: !input dial_thermostat
     attribute: current_temperature
   - trigger: state
-    entity_id: !input boost_helper
+    entity_id: !input offset_helper
   - trigger: state
     entity_id: !input weather_entity
     attribute: temperature
@@ -133,7 +139,8 @@ actions:
       dial_entity: !input dial_thermostat
       minisplit_list: !input minisplits
       weather_ent: !input weather_entity
-      boost_entity: !input boost_helper
+      offset_entity: !input offset_helper
+      status_entity: !input status_helper
       cool_band: !input cool_band
       cool_floor: !input cool_outdoor_floor
       hp_offset: !input hp_offset
@@ -144,7 +151,8 @@ actions:
       dial: "{{ state_attr(dial_entity, 'temperature') }}"
       room: "{{ state_attr(dial_entity, 'current_temperature') }}"
       outdoor: "{{ state_attr(weather_ent, 'temperature') }}"
-      boost: "{{ states(boost_entity) | float(0) }}"
+      offset: "{{ states(offset_entity) | float(0) }}"
+      eff: "{{ dial | float(0) + offset }}"
       head: "{{ minisplit_list if minisplit_list is string else minisplit_list[0] }}"
       head_mode: "{{ states(head) }}"
       head_target: "{{ state_attr(head, 'temperature') | float(0) }}"
@@ -152,24 +160,32 @@ actions:
         {%- if dial is none or room is none or outdoor is none -%} none
         {%- elif head_mode in ['unavailable', 'unknown'] -%} none
         {%- elif outdoor | float >= cool_floor | float -%}
-          {%- if room | float >= dial | float + cool_band | float -%} cool
-          {%- elif head_mode == 'cool' and room | float > dial | float - 0.5 -%} cool
+          {%- if room | float >= eff + cool_band | float -%} cool
+          {%- elif head_mode == 'cool' and room | float > eff - 0.5 -%} cool
           {%- else -%} idle
           {%- endif -%}
         {%- elif outdoor | float >= hp_floor | float and outdoor | float < hp_max | float -%}
-          {%- if room | float <= dial | float + 0.5 + boost -%} heat
-          {%- elif head_mode == 'heat' and room | float < dial | float + hp_offset | float + boost + 0.5 -%} heat
+          {%- if room | float <= eff + 0.5 -%} heat
+          {%- elif head_mode == 'heat' and room | float < eff + hp_offset | float + 0.5 -%} heat
           {%- else -%} idle
           {%- endif -%}
         {%- else -%} idle
         {%- endif -%}
       desired_target: >-
         {%- if desired_mode == 'cool' -%}
-          {{ [ [ dial | float - 0.5, 62.5 ] | max, 86 ] | min }}
+          {{ [ [ eff - 0.5, 62.5 ] | max, 86 ] | min }}
         {%- elif desired_mode == 'heat' -%}
-          {{ [ [ dial | float + hp_offset | float + boost + cal | float, 62.5 ] | max, 86 ] | min }}
+          {{ [ [ eff + hp_offset | float + cal | float, 62.5 ] | max, 86 ] | min }}
         {%- else -%} 0
         {%- endif -%}
+  - action: input_text.set_value
+    target:
+      entity_id: !input status_helper
+    data:
+      value: >-
+        {{ desired_mode }}{% if desired_mode in ['cool', 'heat'] %} → {{ desired_target }}{% endif %}
+        | room {{ room }} dial {{ dial }}{% if offset != 0 %} ({{ '%+.1f' | format(offset) }}){% endif %} out {{ outdoor }}
+        | {{ now().strftime('%H:%M') }}
   - choose:
       - conditions: "{{ desired_mode == 'none' }}"
         sequence:

@@ -89,28 +89,36 @@ Notes on semantics:
 | `hp_outdoor_max` | number (°F) | 60 |
 | `calibration_offset` | number (°F) | 0 (per-room, measured head-vs-wall disagreement) |
 | `idle_mode` | select: `off` / `fan_only` | `off` |
-| `boost_helper` | input_number entity (optional) | none |
+| `offset_helper` | input_number entity (−5…+5, shifts effective dial) | — |
+| `status_helper` | input_text entity (blueprint writes decision each run) | — |
 | `lockout_switch` | switch entity (optional, Phase 2) | none |
 
 Triggers: dial setpoint change, dial `current_temperature` change (with persistence),
 outdoor temperature change (with persistence), minisplit availability change,
 boost helper change, HA start / automation reload. Mode: `restart`.
 
-## Morning warm-ups (rebuilt)
+## Offsets, schedules, and warm-ups (amended 2026-07-21 after pilot)
 
-Replaces `automation.warm_up_master_bedroom` and `automation.warm_up_the_kids`
-(delay-based; not restart-safe; moved wall setpoints, which under the new contract
-would fire the boiler).
+The boost concept generalizes to a per-room **offset** (`input_number.climate_offset_*`,
+−5…+5): the effective target everywhere is `dial + offset`. Schedules *shift* the
+family's dial; they never overwrite it, and the wall setpoint (the boiler trigger)
+never moves. Offsets are written only by per-room "Climate Offset" glue automations:
 
-- Per-room `input_number` boost helpers: `input_number.climate_boost_master`,
-  `input_number.climate_boost_margaret`, `input_number.climate_boost_will`.
-- One schedule automation with four independent time triggers (restart-proof):
-  - 05:30 daily → master boost = 3; 06:30 → master boost = 0
-  - 06:30 weekdays → both kids' boosts = 2; 07:30 → both = 0
-- Boost values preserve the old warm-up targets: master 66+1+3 = 70, kids 67+1+2 = 70.
-- Boost raises both the HP-heat entry threshold and target, so the minisplit does the
-  morning bump alone; the wall dial (and thus the boiler trigger) never moves.
-- Schedule is gated on outdoor temperature < 45° so summer mornings are unaffected.
+- **Warm-up** (replaces the old delay-based warm-ups): weekday mornings with outdoor
+  < 45°, offset = +3 master (05:30–06:30), +2 kids (06:30–07:30). Preserves the old
+  70° targets: master 66+1+3, kids 67+1+2.
+- **Night setback**: per-room HA `schedule` helpers (`schedule.night_setback_*`,
+  family-editable weekly grid in the UI) drive offset = −3 while active. Warm-up
+  windows take precedence over setback in the glue automation's choose ordering.
+- Main floor has no warm-up; setback only.
+
+## Status visibility (amended 2026-07-21 after pilot)
+
+The blueprint writes its decision to a per-room `input_text`
+(`input_text.climate_status_*`) on every evaluation — mode, target, and the inputs
+it saw (room, dial, offset, outdoor, time). Status is published by the decision
+logic itself, never re-derived in templates. A dedicated "Climate" dashboard shows
+each room's dial, status line, offset, setback schedule, and minisplit.
 
 ## Phase 2 — boiler lockout interlock (hardware ordered, not yet arrived)
 
