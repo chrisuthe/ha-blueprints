@@ -122,7 +122,7 @@ blueprint:
           unit_of_measurement: "°F"
     fan_step:
       name: Fan ladder step (°F)
-      description: Each additional step of gap beyond the auto band raises the fan one tier (medium → high → Turbo).
+      description: Each additional step of gap beyond the auto band raises the fan one tier.
       default: 1.0
       selector:
         number:
@@ -130,6 +130,23 @@ blueprint:
           max: 3
           step: 0.5
           unit_of_measurement: "°F"
+    fan_tier_1:
+      name: Fan tier 1 (first step above auto)
+      description: Must be a valid fan_mode of the units. SF uses medium; the Della lake units also have medium.
+      default: medium
+      selector:
+        text: {}
+    fan_tier_2:
+      name: Fan tier 2
+      default: high
+      selector:
+        text: {}
+    fan_tier_3:
+      name: Fan tier 3 (max)
+      description: SF units support Turbo; the Della lake units cap at high.
+      default: Turbo
+      selector:
+        text: {}
     calibration_offset:
       name: Calibration offset (°F)
       description: Measured disagreement between the minisplit head sensor and the wall thermostat; added to the commanded heat target.
@@ -203,6 +220,9 @@ actions:
       idle_mode: !input idle_mode
       fan_auto_band: !input fan_auto_band
       fan_step: !input fan_step
+      fan_t1: !input fan_tier_1
+      fan_t2: !input fan_tier_2
+      fan_t3: !input fan_tier_3
       head: "{{ minisplit_list if minisplit_list is string else minisplit_list[0] }}"
       head_mode: "{{ states(head) }}"
       head_target: "{{ state_attr(head, 'temperature') | float(0) }}"
@@ -242,9 +262,9 @@ actions:
         {%- if desired_mode == 'cool' -%}
           {%- set gap = room | float - eff -%}
           {%- if gap <= fan_auto_band | float -%} auto
-          {%- elif gap <= fan_auto_band | float + fan_step | float -%} medium
-          {%- elif gap <= fan_auto_band | float + 2 * fan_step | float -%} high
-          {%- else -%} Turbo
+          {%- elif gap <= fan_auto_band | float + fan_step | float -%} {{ fan_t1 }}
+          {%- elif gap <= fan_auto_band | float + 2 * fan_step | float -%} {{ fan_t2 }}
+          {%- else -%} {{ fan_t3 }}
           {%- endif -%}
         {%- else -%} auto
         {%- endif -%}
