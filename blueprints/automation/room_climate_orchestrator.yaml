@@ -1,26 +1,41 @@
 blueprint:
   name: Room Climate Orchestrator
   description: >
-    Treats a wall thermostat (kept in heat mode year-round) as the room's
-    desired-temperature dial and drives one or more minisplit heads to satisfy it.
-    Outdoor temperature picks the armed side: cooling at/above the cool floor,
-    heat-pump heat inside the HP window, idle otherwise. Hot-water heat stays the
-    hardwired backup via the wall thermostat itself. Room temperature is always read
-    from the wall thermostat, never the minisplit head sensor.
+    Drives one or more minisplit heads to satisfy a desired-temperature dial. The dial can
+    be a wall thermostat (its setpoint) or a plain input_number; room truth can come from an
+    external sensor, the dial thermostat's own sensor, or the minisplit head. Outdoor
+    temperature picks the armed side: cooling at/above the cool floor, heat-pump heat inside
+    the HP window, idle otherwise. A fan-speed ladder scales airflow with distance from target.
   domain: automation
   source_url: https://github.com/chrisuthe/ha-blueprints/blob/main/blueprints/automation/room_climate_orchestrator.yaml
   input:
     dial_thermostat:
-      name: Wall thermostat (dial)
-      description: Family-facing thermostat. Its setpoint is the desired temperature; its sensor is the room temperature.
+      name: Dial (thermostat or number)
+      description: >
+        The desired-temperature source. Either a climate entity (its target temp is the
+        dial and its sensor is the room) or an input_number/number holding the desired temp.
       selector:
         entity:
-          domain: climate
+          domain:
+            - climate
+            - input_number
+            - number
     minisplits:
       name: Minisplit head(s)
       selector:
         entity:
           domain: climate
+          multiple: true
+    room_sensor:
+      name: Room temperature sensor(s) (optional)
+      description: >
+        External sensor(s) giving true room temperature (averaged if several). Leave empty
+        to use the dial thermostat's own sensor, or the minisplit head when the dial is a
+        plain number.
+      default: []
+      selector:
+        entity:
+          domain: sensor
           multiple: true
     offset_helper:
       name: Offset helper
@@ -57,6 +72,18 @@ blueprint:
           min: 40
           max: 80
           step: 1
+    cool_target_offset:
+      name: Cool target offset (°F relative to dial)
+      description: >
+        Commanded cooling setpoint = dial + this. Sioux Falls uses −0.5 to stay above the
+        boiler differential; the lake uses 0 (the dial is the desired room temperature).
+      default: -0.5
+      selector:
+        number:
+          min: -3
+          max: 1
+          step: 0.5
+          unit_of_measurement: "°F"
     hp_offset:
       name: Heat target offset (°F above dial)
       default: 1.0
@@ -139,6 +166,10 @@ triggers:
     entity_id: !input dial_thermostat
     attribute: current_temperature
   - trigger: state
+    entity_id: !input dial_thermostat
+  - trigger: time_pattern
+    minutes: "/1"
+  - trigger: state
     entity_id: !input offset_helper
   - trigger: state
     entity_id: !input weather_entity
@@ -161,8 +192,10 @@ actions:
       weather_ent: !input weather_entity
       offset_entity: !input offset_helper
       status_entity: !input status_helper
+      room_sensor_list: !input room_sensor
       cool_band: !input cool_band
       cool_floor: !input cool_outdoor_floor
+      cool_target_offset: !input cool_target_offset
       hp_offset: !input hp_offset
       hp_floor: !input hp_outdoor_floor
       hp_max: !input hp_outdoor_max
@@ -170,16 +203,21 @@ actions:
       idle_mode: !input idle_mode
       fan_auto_band: !input fan_auto_band
       fan_step: !input fan_step
-      dial: "{{ state_attr(dial_entity, 'temperature') }}"
-      room: "{{ state_attr(dial_entity, 'current_temperature') }}"
-      outdoor: "{{ state_attr(weather_ent, 'temperature') }}"
-      offset: "{{ states(offset_entity) | float(0) }}"
-      eff: "{{ dial | float(0) + offset }}"
       head: "{{ minisplit_list if minisplit_list is string else minisplit_list[0] }}"
       head_mode: "{{ states(head) }}"
       head_target: "{{ state_attr(head, 'temperature') | float(0) }}"
+      head_fan: "{{ state_attr(head, 'fan_mode') }}"
+      dial_is_climate: "{{ dial_entity.split('.')[0] == 'climate' }}"
+      dial: >-
+        {% if dial_is_climate %}{{ state_attr(dial_entity, 'temperature') }}{% else %}{{ states(dial_entity) }}{% endif %}
+      room: >-
+        {% if room_sensor_list | count > 0 %}{{ (room_sensor_list | map('states') | map('float', 0) | sum) / (room_sensor_list | count) }}{% elif dial_is_climate %}{{ state_attr(dial_entity, 'current_temperature') }}{% else %}{{ state_attr(head, 'current_temperature') }}{% endif %}
+      outdoor: "{{ state_attr(weather_ent, 'temperature') }}"
+      offset: "{{ states(offset_entity) | float(0) }}"
+      eff: "{{ dial | float(0) + offset }}"
       desired_mode: >-
-        {%- if dial is none or room is none or outdoor is none -%} none
+        {%- if dial in [none, 'unknown', 'unavailable'] or room in [none, 'unknown', 'unavailable'] or outdoor is none -%} none
+        {%- elif dial | float(0) < 40 or room | float(0) < 40 -%} none
         {%- elif head_mode in ['unavailable', 'unknown'] -%} none
         {%- elif outdoor | float >= cool_floor | float -%}
           {%- if room | float >= eff + cool_band | float -%} cool
@@ -195,12 +233,11 @@ actions:
         {%- endif -%}
       desired_target: >-
         {%- if desired_mode == 'cool' -%}
-          {{ [ [ eff - 0.5, 62.5 ] | max, 86 ] | min }}
+          {{ [ [ eff + cool_target_offset | float, 62.5 ] | max, 86 ] | min }}
         {%- elif desired_mode == 'heat' -%}
           {{ [ [ eff + hp_offset | float + cal | float, 62.5 ] | max, 86 ] | min }}
         {%- else -%} 0
         {%- endif -%}
-      head_fan: "{{ state_attr(head, 'fan_mode') }}"
       desired_fan: >-
         {%- if desired_mode == 'cool' -%}
           {%- set gap = room | float - eff -%}
@@ -217,7 +254,7 @@ actions:
     data:
       value: >-
         {{ desired_mode }}{% if desired_mode in ['cool', 'heat'] %} → {{ desired_target }}{% endif %}{% if desired_mode == 'cool' %} fan {{ desired_fan }}{% endif %}
-        | room {{ room }} dial {{ dial }}{% if offset != 0 %} ({{ '%+.1f' | format(offset) }}){% endif %} out {{ outdoor }}
+        | room {{ room | float(0) | round(1) }} dial {{ dial | float(0) | round(1) }}{% if offset != 0 %} ({{ '%+.1f' | format(offset) }}){% endif %} out {{ outdoor }}
         | {{ now().strftime('%H:%M') }}
   - choose:
       - conditions: "{{ desired_mode == 'none' }}"
