@@ -22,8 +22,15 @@ the room temperature, and the outdoor temperature. No seasonal toggles.
 
 ## The contract
 
-- Every wall thermostat stays in **heat mode year-round** with a live setpoint (the
-  "dial", **D**). The family only ever changes D.
+- Every wall thermostat keeps a live setpoint (the "dial", **D**) year-round. The
+  family only ever changes D. *(Amended after rollout:)* mode follows the season —
+  **heat in heating season** (the hardwired boiler-backup path requires it), **cool
+  in summer**: with no cooling equipment wired, a cool call is a harmless no-op, the
+  display matches the season, and the zone valves rest. "Climate Season:
+  Summer/Winter" scripts (dashboard buttons) flip all four dials and copy each
+  setpoint across, since these stats keep separate heat/cool setpoints. Pair the
+  flip with the manual boiler ritual. The blueprint never reads dial mode, only the
+  setpoint, so orchestration is unaffected.
 - Room temperature is always read from the **wall thermostat's sensor** — never the
   minisplit head sensor, which over-reads in heating (warm air stratifies at the
   ceiling). This also matters because the wall sensor is what triggers the hardwired
