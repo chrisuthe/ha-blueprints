@@ -143,8 +143,10 @@ crosses the wall trigger; ~20–40 min, arguably good UX).
 ## Rollout
 
 1. Create repo, author blueprint, import into HA.
-2. One-time prep: set all four wall thermostats to heat mode with their established
-   comfort setpoints (main floor 69, master 66, kids 67).
+2. One-time prep: set all four wall thermostats to heat mode with initial dials equal
+   to the **current minisplit targets** (main floor 69, master 69, kids 70) so day-one
+   behavior matches today; the family tunes from there. (The winter hot-water numbers
+   66–67 would drive the AC to ~65.5° in July.)
 3. Create helpers + schedule automation.
 4. **Pilot: Will's room.** Disable (don't delete) `automation.minisplit_control_wills_room`.
    Cooling path is live-testable in July; heating path exercised synthetically by
