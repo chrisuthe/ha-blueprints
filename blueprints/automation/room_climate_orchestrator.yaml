@@ -267,7 +267,13 @@ actions:
               entity_id: !input minisplits
             data:
               hvac_mode: "{{ idle_mode }}"
-  - if: "{{ head_fan != desired_fan }}"
+  # Never send fan commands toward an off unit — set_fan_mode WAKES a sleeping
+  # minisplit into fan_only. Ladder applies in cool; normalization only when
+  # idling in fan_only (heat is on anyway, so normalizing there is safe too).
+  - if: >-
+      {{ head_fan != desired_fan
+         and (desired_mode in ['cool', 'heat']
+              or (desired_mode == 'idle' and idle_mode == 'fan_only')) }}
     then:
       - action: climate.set_fan_mode
         target:
