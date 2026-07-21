@@ -1,0 +1,216 @@
+blueprint:
+  name: Room Climate Orchestrator
+  description: >
+    Treats a wall thermostat (kept in heat mode year-round) as the room's
+    desired-temperature dial and drives one or more minisplit heads to satisfy it.
+    Outdoor temperature picks the armed side: cooling at/above the cool floor,
+    heat-pump heat inside the HP window, idle otherwise. Hot-water heat stays the
+    hardwired backup via the wall thermostat itself. Room temperature is always read
+    from the wall thermostat, never the minisplit head sensor.
+  domain: automation
+  source_url: https://github.com/chrisuthe/ha-blueprints/blob/main/blueprints/automation/room_climate_orchestrator.yaml
+  input:
+    dial_thermostat:
+      name: Wall thermostat (dial)
+      description: Family-facing thermostat. Its setpoint is the desired temperature; its sensor is the room temperature.
+      selector:
+        entity:
+          domain: climate
+    minisplits:
+      name: Minisplit head(s)
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+    boost_helper:
+      name: Boost helper
+      description: input_number added to the heat entry threshold and heat target (morning warm-ups). Stays 0 when unused.
+      selector:
+        entity:
+          domain: input_number
+    weather_entity:
+      name: Weather source
+      default: weather.pirateweather
+      selector:
+        entity:
+          domain: weather
+    cool_band:
+      name: Cooling entry band (°F above dial)
+      default: 1.0
+      selector:
+        number:
+          min: 0.5
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°F"
+    cool_outdoor_floor:
+      name: Minimum outdoor temperature for cooling (°F)
+      default: 60
+      selector:
+        number:
+          min: 40
+          max: 80
+          step: 1
+    hp_offset:
+      name: Heat target offset (°F above dial)
+      default: 1.0
+      selector:
+        number:
+          min: 0.5
+          max: 3
+          step: 0.5
+          unit_of_measurement: "°F"
+    hp_outdoor_floor:
+      name: Minimum outdoor temperature for heat-pump heat (°F)
+      default: 20
+      selector:
+        number:
+          min: -20
+          max: 50
+          step: 1
+    hp_outdoor_max:
+      name: Maximum outdoor temperature for heat-pump heat (°F)
+      description: Keep equal to the cooling floor so heat and cool are never armed together.
+      default: 60
+      selector:
+        number:
+          min: 40
+          max: 80
+          step: 1
+    calibration_offset:
+      name: Calibration offset (°F)
+      description: Measured disagreement between the minisplit head sensor and the wall thermostat; added to the commanded heat target.
+      default: 0
+      selector:
+        number:
+          min: -5
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°F"
+    idle_mode:
+      name: Idle behavior
+      default: "off"
+      selector:
+        select:
+          options:
+            - "off"
+            - fan_only
+    lockout_switch:
+      name: Boiler lockout switch (Phase 2 — not driven yet)
+      description: Reserved for the zone-panel interlock relay. Ignored by this version.
+      default: []
+      selector:
+        entity:
+          domain: switch
+          multiple: true
+mode: restart
+max_exceeded: silent
+triggers:
+  - trigger: state
+    entity_id: !input dial_thermostat
+    attribute: temperature
+  - trigger: state
+    entity_id: !input dial_thermostat
+    attribute: current_temperature
+  - trigger: state
+    entity_id: !input boost_helper
+  - trigger: state
+    entity_id: !input weather_entity
+    attribute: temperature
+  - trigger: state
+    entity_id: !input minisplits
+    to: unavailable
+  - trigger: state
+    entity_id: !input minisplits
+    from: unavailable
+  - trigger: homeassistant
+    event: start
+  - trigger: event
+    event_type: automation_reloaded
+conditions: []
+actions:
+  - variables:
+      dial_entity: !input dial_thermostat
+      minisplit_list: !input minisplits
+      weather_ent: !input weather_entity
+      boost_entity: !input boost_helper
+      cool_band: !input cool_band
+      cool_floor: !input cool_outdoor_floor
+      hp_offset: !input hp_offset
+      hp_floor: !input hp_outdoor_floor
+      hp_max: !input hp_outdoor_max
+      cal: !input calibration_offset
+      idle_mode: !input idle_mode
+      dial: "{{ state_attr(dial_entity, 'temperature') }}"
+      room: "{{ state_attr(dial_entity, 'current_temperature') }}"
+      outdoor: "{{ state_attr(weather_ent, 'temperature') }}"
+      boost: "{{ states(boost_entity) | float(0) }}"
+      head: "{{ minisplit_list if minisplit_list is string else minisplit_list[0] }}"
+      head_mode: "{{ states(head) }}"
+      head_target: "{{ state_attr(head, 'temperature') | float(0) }}"
+      desired_mode: >-
+        {%- if dial is none or room is none or outdoor is none -%} none
+        {%- elif head_mode in ['unavailable', 'unknown'] -%} none
+        {%- elif outdoor | float >= cool_floor | float -%}
+          {%- if room | float >= dial | float + cool_band | float -%} cool
+          {%- elif head_mode == 'cool' and room | float > dial | float - 0.5 -%} cool
+          {%- else -%} idle
+          {%- endif -%}
+        {%- elif outdoor | float >= hp_floor | float and outdoor | float < hp_max | float -%}
+          {%- if room | float <= dial | float + 0.5 + boost -%} heat
+          {%- elif head_mode == 'heat' and room | float < dial | float + hp_offset | float + boost + 0.5 -%} heat
+          {%- else -%} idle
+          {%- endif -%}
+        {%- else -%} idle
+        {%- endif -%}
+      desired_target: >-
+        {%- if desired_mode == 'cool' -%}
+          {{ [ [ dial | float - 0.5, 62.5 ] | max, 86 ] | min }}
+        {%- elif desired_mode == 'heat' -%}
+          {{ [ [ dial | float + hp_offset | float + boost + cal | float, 62.5 ] | max, 86 ] | min }}
+        {%- else -%} 0
+        {%- endif -%}
+  - choose:
+      - conditions: "{{ desired_mode == 'none' }}"
+        sequence:
+          - stop: Missing dial/room/outdoor data or minisplit unavailable.
+      - conditions: "{{ desired_mode == 'cool' }}"
+        sequence:
+          - if: "{{ head_mode != 'cool' }}"
+            then:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: !input minisplits
+                data:
+                  hvac_mode: cool
+          - if: "{{ head_mode != 'cool' or (head_target - desired_target | float) | abs >= 0.25 }}"
+            then:
+              - action: climate.set_temperature
+                target:
+                  entity_id: !input minisplits
+                data:
+                  temperature: "{{ desired_target }}"
+      - conditions: "{{ desired_mode == 'heat' }}"
+        sequence:
+          - if: "{{ head_mode != 'heat' }}"
+            then:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: !input minisplits
+                data:
+                  hvac_mode: heat
+          - if: "{{ head_mode != 'heat' or (head_target - desired_target | float) | abs >= 0.25 }}"
+            then:
+              - action: climate.set_temperature
+                target:
+                  entity_id: !input minisplits
+                data:
+                  temperature: "{{ desired_target }}"
+    default:
+      - if: "{{ head_mode != idle_mode }}"
+        then:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input minisplits
+            data:
+              hvac_mode: "{{ idle_mode }}"
