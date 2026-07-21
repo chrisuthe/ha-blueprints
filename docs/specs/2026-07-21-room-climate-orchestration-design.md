@@ -182,6 +182,35 @@ crosses the wall trigger; ~20–40 min, arguably good UX).
 7. Phase 2 when the relay board arrives: flash + bench-test watchdog behavior, wire
    at the zone panel, fill `lockout_switch` on each instance.
 
+## Lake House (The Hideout) — second deployment, blueprint v1.3 (2026-07-21)
+
+Second HA instance (`http://192.168.12.2:8123`, LAN/HTTP, token `.hass_token_local`).
+Four Della minisplits on **tuya-local** (fan modes `off/low/medium/high/auto`, no Turbo).
+No hot-water heat, no wall thermostats — minisplits are the whole story, so there is no
+boiler-arbitration or relay concern. Problem solved here: the units overshoot at night
+(they regulate off a ceiling head sensor that reads warm), so bedrooms run cold. Fix =
+close the loop on external YoLink sensors at wall/bed level.
+
+Blueprint **v1.3** (backward-compatible; SF instances untouched) added:
+
+- `dial_thermostat` now also accepts an `input_number`/`number` — the dial can be a plain
+  setpoint number, not just a climate entity. Detected via entity domain.
+- `room_sensor` (optional, multiple, averaged) — external room truth. Falls back to the
+  dial thermostat's `current_temperature`, then the minisplit head, when empty.
+- `cool_target_offset` (default −0.5; lake uses 0 — no boiler differential to dodge).
+- Fan tiers parameterized (`fan_tier_1/2/3`, default medium/high/Turbo); lake sets
+  tier 3 = `high` since Della units lack Turbo.
+- `time_pattern` `/1` trigger + plain dial state trigger (number dials have no attributes),
+  plus sanity floor (dial/room < 40 °F ⇒ no-op) so a dead sensor can't drive the AC.
+
+Lake rooms (all deployed + verified 2026-07-21): **Master** (`lakeclimate_master`, YoLink
+`…_temperature_3`, idle off), **Guest** (`lakeclimate_guest`, YoLink `…_temperature`, idle
+off), **Great Room** (`lakeclimate_great_room`, Kitchen+Living heads, no external sensor →
+head fallback, idle fan_only). Software `input_number` dials (`input_number.lake_dial_*`)
+stand in until CrowPanel 2.1" knobs go on the walls — then repoint the dial input, zero
+orchestrator change. "Lake Climate" dashboard at `/lake-climate`. Weather:
+`weather.forecast_home`.
+
 ## Open items
 
 - Measure each head's calibration offset (head reading vs wall reading) after a few
@@ -189,3 +218,8 @@ crosses the wall trigger; ~20–40 min, arguably good UX).
 - Observe the Zens' actual call-for-heat differential once the boiler returns in fall.
 - Optional later: a "keeper" automation restoring heat mode if a wall stat gets
   turned off out of habit.
+- **Sioux Falls blueprint copy lags the repo (still pre-v1.3).** v1.3 is backward-compatible;
+  re-import to SF during a calm window to unify versions.
+- Lake: deploy CrowPanel 2.1" knobs (double-gang printed adapter, MX1.25 pigtail power) and
+  repoint each `lakeclimate_*` dial input from the `input_number` to the knob entity.
+- Lake winter: heat logic is enabled (heat pumps) but unvalidated — confirm when cold.
