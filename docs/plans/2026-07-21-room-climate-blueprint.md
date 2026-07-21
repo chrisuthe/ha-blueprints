@@ -21,15 +21,16 @@
   - `boost_helper` is a **required** input; a 4th (unused-by-schedule) helper is created for Main Floor.
   - `lockout_switch` input exists but is **inert** in v1; drive logic lands with the Phase 2 blueprint update.
   - Initial dials = current minisplit targets (main 69, master 69, kids 70), not winter comfort numbers.
+  - **v1.2 amendments (2026-07-21, mid-execution):** boost generalized to offset (−5…+5, `input_number.climate_offset_*`); blueprint inputs are now `offset_helper` + required `status_helper` (`input_text.climate_status_*`); night-setback `schedule.night_setback_*` helpers exist; Task 9's single warm-up automation is replaced by per-room "Climate Offset" glue automations (warm-up branch takes precedence over setback; Will's already exists as `climate_offset_will`). Gotcha: new `input_number` helpers initialize to their **minimum** — explicitly set 0 after creation.
 
 ## Entity Reference (used by every task)
 
 | Zone | Dial | Minisplit(s) | Boost helper | Old automation id |
 |---|---|---|---|---|
-| Will's Room | `climate.zen_within_zen_01_9cca1200_fan_thermostat` | `climate.air_coniditioning_will_wills_bedroom` | `input_number.climate_boost_will` | `1711133709451` |
-| Margaret's Room | `climate.zen_within_zen_01_1d6f1200_fan_thermostat` | `climate.air_conditioner_margaret_margaret_air_conditioner` | `input_number.climate_boost_margaret` | `1711134903934` |
-| Master Bedroom | `climate.master_bedroom_thermostat_fan_thermostat` | `climate.master_bedroom_climate` | `input_number.climate_boost_master` | `1713543049333` |
-| Main Floor | `climate.living_room_livingroomthermostat_climate` | `climate.main_floor_east`, `climate.main_floor_west` | `input_number.climate_boost_main_floor` | `1701969294983` |
+| Will's Room | `climate.zen_within_zen_01_9cca1200_fan_thermostat` | `climate.air_coniditioning_will_wills_bedroom` | `input_number.climate_offset_will` | `1711133709451` |
+| Margaret's Room | `climate.zen_within_zen_01_1d6f1200_fan_thermostat` | `climate.air_conditioner_margaret_margaret_air_conditioner` | `input_number.climate_offset_margaret` | `1711134903934` |
+| Master Bedroom | `climate.master_bedroom_thermostat_fan_thermostat` | `climate.master_bedroom_climate` | `input_number.climate_offset_master` | `1713543049333` |
+| Main Floor | `climate.living_room_livingroomthermostat_climate` | `climate.main_floor_east`, `climate.main_floor_west` | `input_number.climate_offset_main_floor` | `1701969294983` |
 
 Old warm-ups: `1644464608743` (master), `1639334415698` (kids). Toggle: `input_boolean.use_heat_pumps`.
 
@@ -358,7 +359,7 @@ foreach ($p in $pairs) {
 ### Task 5: Create the four boost helpers
 
 **Interfaces:**
-- Produces: `input_number.climate_boost_will`, `_margaret`, `_master`, `_main_floor` (consumed by Tasks 7/9 and the schedule in Task 9).
+- Produces: `input_number.climate_offset_will`, `_margaret`, `_master`, `_main_floor` (consumed by Tasks 7/9 and the schedule in Task 9).
 
 - [ ] **Step 1: Create via REST** (repeat per id `climate_boost_will|margaret|master|main_floor`):
 
@@ -367,7 +368,7 @@ $body = @{ name = 'Climate Boost Will'; min = 0; max = 5; step = 0.5; unit_of_me
 Invoke-RestMethod -Method Post -Uri "https://ha.home.chrisuthe.com/api/config/input_number/config/climate_boost_will" -Headers $h -ContentType 'application/json' -Body $body
 ```
 
-- [ ] **Step 2: Verify** — `GET /api/states/input_number.climate_boost_will` etc.: state `0.0`.
+- [ ] **Step 2: Verify** — `GET /api/states/input_number.climate_offset_will` etc.: state `0.0`.
 
 ---
 
@@ -395,7 +396,7 @@ $body = @{
     input = @{
       dial_thermostat = 'climate.zen_within_zen_01_9cca1200_fan_thermostat'
       minisplits = @('climate.air_coniditioning_will_wills_bedroom')
-      boost_helper = 'input_number.climate_boost_will'
+      boost_helper = 'input_number.climate_offset_will'
       idle_mode = 'fan_only'
     }
   }
@@ -431,15 +432,15 @@ $instances = @(
   @{ id = 'roomclimate_margaret'; alias = "Room Climate: Margaret's Room"
      dial = 'climate.zen_within_zen_01_1d6f1200_fan_thermostat'
      splits = @('climate.air_conditioner_margaret_margaret_air_conditioner')
-     boost = 'input_number.climate_boost_margaret'; idle = 'off' },
+     boost = 'input_number.climate_offset_margaret'; idle = 'off' },
   @{ id = 'roomclimate_master'; alias = 'Room Climate: Master Bedroom'
      dial = 'climate.master_bedroom_thermostat_fan_thermostat'
      splits = @('climate.master_bedroom_climate')
-     boost = 'input_number.climate_boost_master'; idle = 'off' },
+     boost = 'input_number.climate_offset_master'; idle = 'off' },
   @{ id = 'roomclimate_main_floor'; alias = 'Room Climate: Main Floor'
      dial = 'climate.living_room_livingroomthermostat_climate'
      splits = @('climate.main_floor_east', 'climate.main_floor_west')
-     boost = 'input_number.climate_boost_main_floor'; idle = 'fan_only' }
+     boost = 'input_number.climate_offset_main_floor'; idle = 'fan_only' }
 )
 foreach ($i in $instances) {
   $body = @{
@@ -450,7 +451,8 @@ foreach ($i in $instances) {
       input = @{
         dial_thermostat = $i.dial
         minisplits = $i.splits
-        boost_helper = $i.boost
+        offset_helper = $i.boost
+        status_helper = ($i.boost -replace 'input_number\.climate_offset', 'input_text.climate_status')
         idle_mode = $i.idle
       }
     }
@@ -462,48 +464,54 @@ foreach ($i in $instances) {
 Expected: three `{"result": "ok"}` responses.
 
 - [ ] **Step 3: Verify** each instance's config readback and that each room's minisplit lands in a sensible state within 5 minutes (given July temps: `cool` or idle mode, setpoint tracking dial − 0.5 where cooling).
-- [ ] **Step 4: Create the warm-up schedule automation:**
+- [ ] **Step 4: Create the three remaining per-room offset glue automations** (Will's — `climate_offset_will` — already exists from the v1.2 pilot; these mirror it):
 
 ```powershell
-$body = @{
-  id = 'climate_warmup_boosts'
-  alias = 'Climate: Morning Warm-Up Boosts'
-  description = 'Sets per-room boost helpers for morning warm-ups; blueprint instances react. Gated on cold mornings only.'
-  mode = 'queued'
-  triggers = @(
-    @{ trigger = 'time'; at = '05:30:00'; id = 'master_on' },
-    @{ trigger = 'time'; at = '06:30:00'; id = 'master_off' },
-    @{ trigger = 'time'; at = '06:30:00'; id = 'kids_on' },
-    @{ trigger = 'time'; at = '07:30:00'; id = 'kids_off' }
+$glues = @(
+  @{ id = 'climate_offset_margaret'; alias = "Climate Offset: Margaret's Room"
+     offset = 'input_number.climate_offset_margaret'; sched = 'schedule.night_setback_margaret'
+     wu_start = '06:30:00'; wu_end = '07:30:00'; wu_val = 2; wu_weekdays_only = $true },
+  @{ id = 'climate_offset_master'; alias = 'Climate Offset: Master Bedroom'
+     offset = 'input_number.climate_offset_master'; sched = 'schedule.night_setback_master'
+     wu_start = '05:30:00'; wu_end = '06:30:00'; wu_val = 3; wu_weekdays_only = $false },
+  @{ id = 'climate_offset_main_floor'; alias = 'Climate Offset: Main Floor'
+     offset = 'input_number.climate_offset_main_floor'; sched = 'schedule.night_setback_main_floor'
+     wu_start = $null }
+)
+foreach ($g in $glues) {
+  $triggers = @(
+    @{ trigger = 'state'; entity_id = $g.sched },
+    @{ trigger = 'homeassistant'; event = 'start' }
   )
-  conditions = @()
-  actions = @(
-    @{ choose = @(
-      @{ conditions = @(
-           @{ condition = 'trigger'; id = @('master_on') },
-           @{ condition = 'numeric_state'; entity_id = 'weather.pirateweather'; attribute = 'temperature'; below = 45 }
-         )
-         sequence = @(@{ action = 'input_number.set_value'; target = @{ entity_id = 'input_number.climate_boost_master' }; data = @{ value = 3 } }) },
-      @{ conditions = @(@{ condition = 'trigger'; id = @('master_off') })
-         sequence = @(@{ action = 'input_number.set_value'; target = @{ entity_id = 'input_number.climate_boost_master' }; data = @{ value = 0 } }) },
-      @{ conditions = @(
-           @{ condition = 'trigger'; id = @('kids_on') },
-           @{ condition = 'time'; weekday = @('mon','tue','wed','thu','fri') },
-           @{ condition = 'numeric_state'; entity_id = 'weather.pirateweather'; attribute = 'temperature'; below = 45 }
-         )
-         sequence = @(@{ action = 'input_number.set_value'; target = @{ entity_id = 'input_number.climate_boost_margaret','input_number.climate_boost_will' }; data = @{ value = 2 } }) },
-      @{ conditions = @(@{ condition = 'trigger'; id = @('kids_off') })
-         sequence = @(@{ action = 'input_number.set_value'; target = @{ entity_id = 'input_number.climate_boost_margaret','input_number.climate_boost_will' }; data = @{ value = 0 } }) }
-    ) }
-  )
-} | ConvertTo-Json -Depth 15
-Invoke-RestMethod -Method Post -Uri "https://ha.home.chrisuthe.com/api/config/automation/config/climate_warmup_boosts" -Headers $h -ContentType 'application/json' -Body $body
+  $branches = @()
+  if ($g.wu_start) {
+    $triggers += @{ trigger = 'time'; at = $g.wu_start }
+    $triggers += @{ trigger = 'time'; at = $g.wu_end }
+    $wuConds = @()
+    $timeCond = @{ condition = 'time'; after = $g.wu_start; before = $g.wu_end }
+    if ($g.wu_weekdays_only) { $timeCond.weekday = @('mon','tue','wed','thu','fri') }
+    $wuConds += $timeCond
+    $wuConds += @{ condition = 'numeric_state'; entity_id = 'weather.pirateweather'; attribute = 'temperature'; below = 45 }
+    $branches += @{ conditions = $wuConds
+      sequence = @(@{ action = 'input_number.set_value'; target = @{ entity_id = $g.offset }; data = @{ value = $g.wu_val } }) }
+  }
+  $branches += @{ conditions = @(@{ condition = 'state'; entity_id = $g.sched; state = 'on' })
+    sequence = @(@{ action = 'input_number.set_value'; target = @{ entity_id = $g.offset }; data = @{ value = -3 } }) }
+  $body = @{
+    id = $g.id; alias = $g.alias; mode = 'restart'
+    description = 'Writes the room climate offset: warm-up takes precedence over night setback.'
+    triggers = $triggers; conditions = @()
+    actions = @(@{ choose = $branches
+      default = @(@{ action = 'input_number.set_value'; target = @{ entity_id = $g.offset }; data = @{ value = 0 } }) })
+  } | ConvertTo-Json -Depth 15
+  Invoke-RestMethod -Method Post -Uri "https://ha.home.chrisuthe.com/api/config/automation/config/$($g.id)" -Headers $h -ContentType 'application/json' -Body $body
+}
 ```
 
-(Note the `entity_id` for the kids' branches is a two-element array; ensure ConvertTo-Json emits `["input_number.climate_boost_margaret","input_number.climate_boost_will"]` — wrap as `@('...','...')`.)
+Expected: three `{"result": "ok"}` responses. Verify each offset helper reads the correct value for the current time of day (0 outside setback/warm-up windows).
 
 - [ ] **Step 5: Disable both old warm-ups** (`automation.warm_up_master_bedroom`, `automation.warm_up_the_kids`) and verify `off`.
-- [ ] **Step 6: Smoke-test a boost:** set `input_number.climate_boost_will` to 2 via `input_number/set_value`, confirm the blueprint instance re-evaluates (logbook run), then set back to 0. (In July this exercises the trigger path; the heat branch stays un-armed — expected.)
+- [ ] **Step 6: Smoke-test a boost:** set `input_number.climate_offset_will` to 2 via `input_number/set_value`, confirm the blueprint instance re-evaluates (logbook run), then set back to 0. (In July this exercises the trigger path; the heat branch stays un-armed — expected.)
 
 ---
 
