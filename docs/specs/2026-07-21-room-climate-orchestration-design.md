@@ -227,6 +227,27 @@ Summer/Winter scripts already flip, so summer = no heat automatically. A plain-n
 Lake winter TODO: to enable heat at the lake, create an `input_boolean` and wire it to each
 `lakeclimate_*` instance's `heat_enable`.
 
+## Humidity-triggered dry resting mode (v1.5, 2026-08-03)
+
+Only the *resting* state changes: when a room is at/below its temp target (would idle) and
+humidity is above `humidity_threshold` (with `humidity_hysteresis`), the unit rests in `dry`
+(dehumidify) instead of off/fan_only. Cooling/heating are untouched (cooling already
+dehumidifies). Because dry mode also cools, `dry_temp_floor` stops drying once the room falls
+more than that far below target — preventing the overcool problem. Per-room inputs:
+`humidity_sensor` (averaged), `humidity_threshold` (default 60), `humidity_hysteresis`
+(default 3), `dry_temp_floor` (default 2). Enabled on both houses at threshold 55% (aggressive),
+2°F floor. Status shows `dry` and `rh NN`.
+
+Humidity sensor wiring: Lake Master `…_humidity_3`, Guest `…_humidity`, Great Room Shelly.
+SF Main Floor `living_room…_humidity_air`, Master `masterbedroom_humidity`, Margaret
+`margaret_humi_humidity`, Will `kidsroom_humidity` (**assumption — verify KidsRoom == Will's room**).
+
+**Gotcha fixed in v1.5:** HA coerces `variables:` template results to native types, so a
+`"{% ... %}{{ x > y }}{% ... %}"` boolean renders as a native `bool`, not the string "True".
+Comparing it with `== 'True'` never matches. Write such flags as pure `{{ ... }}` boolean
+expressions and use them directly (`{% if flag %}`). This also fixed a latent bug where the
+heat gate (`heat_allowed == 'True'`) would have blocked all winter heating.
+
 ## Open items
 
 - Measure each head's calibration offset (head reading vs wall reading) after a few
