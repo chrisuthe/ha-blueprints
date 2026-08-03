@@ -165,6 +165,18 @@ blueprint:
           options:
             - "off"
             - fan_only
+    heat_enable:
+      name: Heat enable switch (optional)
+      description: >
+        input_boolean gating heat-pump heating. If set, heat is allowed only while it is on.
+        If unset, heat follows the dial thermostat's mode (allowed only when the dial is in
+        heat mode); a plain-number dial with no switch never heats. This keeps a cool summer
+        morning (outdoor briefly below the HP window max) from triggering heat.
+      default: []
+      selector:
+        entity:
+          domain: input_boolean
+          multiple: true
     lockout_switch:
       name: Boiler lockout switch (Phase 2 — not driven yet)
       description: Reserved for the zone-panel interlock relay. Ignored by this version.
@@ -210,6 +222,7 @@ actions:
       offset_entity: !input offset_helper
       status_entity: !input status_helper
       room_sensor_list: !input room_sensor
+      heat_enable_list: !input heat_enable
       cool_band: !input cool_band
       cool_floor: !input cool_outdoor_floor
       cool_target_offset: !input cool_target_offset
@@ -235,6 +248,7 @@ actions:
       outdoor: "{{ state_attr(weather_ent, 'temperature') }}"
       offset: "{{ states(offset_entity) | float(0) }}"
       eff: "{{ dial | float(0) + offset }}"
+      heat_allowed: "{% if heat_enable_list | count > 0 %}{{ is_state(heat_enable_list[0], 'on') }}{% elif dial_is_climate %}{{ is_state(dial_entity, 'heat') }}{% else %}False{% endif %}"
       desired_mode: >-
         {%- if dial in [none, 'unknown', 'unavailable'] or room in [none, 'unknown', 'unavailable'] or outdoor is none -%} none
         {%- elif dial | float(0) < 40 or room | float(0) < 40 -%} none
@@ -244,7 +258,7 @@ actions:
           {%- elif head_mode == 'cool' and room | float > eff - 0.5 -%} cool
           {%- else -%} idle
           {%- endif -%}
-        {%- elif outdoor | float >= hp_floor | float and outdoor | float < hp_max | float -%}
+        {%- elif heat_allowed == 'True' and outdoor | float >= hp_floor | float and outdoor | float < hp_max | float -%}
           {%- if room | float <= eff + 0.5 -%} heat
           {%- elif head_mode == 'heat' and room | float < eff + hp_offset | float + 0.5 -%} heat
           {%- else -%} idle
