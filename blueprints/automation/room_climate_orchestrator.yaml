@@ -177,6 +177,46 @@ blueprint:
         entity:
           domain: input_boolean
           multiple: true
+    humidity_sensor:
+      name: Humidity sensor(s) (optional)
+      description: >
+        Room humidity sensor(s), averaged if several. While the room is resting (at/below its
+        temperature target) and humidity is above the threshold, the unit rests in 'dry'
+        (dehumidify) instead of off/fan_only. Leave empty to disable humidity control here.
+      default: []
+      selector:
+        entity:
+          domain: sensor
+          multiple: true
+    humidity_threshold:
+      name: Humidity threshold (% RH)
+      description: Dry mode engages when room humidity rises above this while resting.
+      default: 60
+      selector:
+        number:
+          min: 40
+          max: 80
+          step: 1
+          unit_of_measurement: "%"
+    humidity_hysteresis:
+      name: Humidity hysteresis (% RH)
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 1
+          unit_of_measurement: "%"
+    dry_temp_floor:
+      name: Dry overcool floor (°F below target)
+      description: Stop drying if the room falls more than this far below its temperature target (prevents dry mode from overcooling).
+      default: 2
+      selector:
+        number:
+          min: 0.5
+          max: 10
+          step: 0.5
+          unit_of_measurement: "°F"
     lockout_switch:
       name: Boiler lockout switch (Phase 2 — not driven yet)
       description: Reserved for the zone-panel interlock relay. Ignored by this version.
@@ -223,6 +263,10 @@ actions:
       status_entity: !input status_helper
       room_sensor_list: !input room_sensor
       heat_enable_list: !input heat_enable
+      humidity_list: !input humidity_sensor
+      humidity_threshold: !input humidity_threshold
+      humidity_hyst: !input humidity_hysteresis
+      dry_floor: !input dry_temp_floor
       cool_band: !input cool_band
       cool_floor: !input cool_outdoor_floor
       cool_target_offset: !input cool_target_offset
@@ -282,13 +326,16 @@ actions:
           {%- endif -%}
         {%- else -%} auto
         {%- endif -%}
+      humidity: "{% if humidity_list | count > 0 %}{{ (humidity_list | map('states') | map('float', 0) | sum) / (humidity_list | count) }}{% else %}0{% endif %}"
+      humid_high: "{% if humidity_list | count == 0 %}False{% elif head_mode == 'dry' %}{{ humidity | float(0) > (humidity_threshold | float - humidity_hyst | float) }}{% else %}{{ humidity | float(0) > humidity_threshold | float }}{% endif %}"
+      resting_mode: "{% if humid_high == 'True' and room | float(0) >= eff - dry_floor | float %}dry{% else %}{{ idle_mode }}{% endif %}"
   - action: input_text.set_value
     target:
       entity_id: !input status_helper
     data:
       value: >-
-        {{ desired_mode }}{% if desired_mode in ['cool', 'heat'] %} → {{ desired_target }}{% endif %}{% if desired_mode == 'cool' %} fan {{ desired_fan }}{% endif %}
-        | room {{ room | float(0) | round(1) }} dial {{ dial | float(0) | round(1) }}{% if offset != 0 %} ({{ '%+.1f' | format(offset) }}){% endif %} out {{ outdoor }}
+        {% if desired_mode == 'idle' %}{{ 'dry' if resting_mode == 'dry' else 'idle' }}{% else %}{{ desired_mode }}{% endif %}{% if desired_mode in ['cool', 'heat'] %} → {{ desired_target }}{% endif %}{% if desired_mode == 'cool' %} fan {{ desired_fan }}{% endif %}
+        | room {{ room | float(0) | round(1) }} dial {{ dial | float(0) | round(1) }}{% if offset != 0 %} ({{ '%+.1f' | format(offset) }}){% endif %} out {{ outdoor }}{% if humidity_list | count > 0 %} rh {{ humidity | float(0) | round(0) }}{% endif %}
         | {{ now().strftime('%H:%M') }}
   - choose:
       - conditions: "{{ desired_mode == 'none' }}"
@@ -331,20 +378,20 @@ actions:
                 data:
                   temperature: "{{ desired_target }}"
     default:
-      - if: "{{ head_mode != idle_mode }}"
+      - if: "{{ head_mode != resting_mode }}"
         then:
           - action: climate.set_hvac_mode
             target:
               entity_id: !input minisplits
             data:
-              hvac_mode: "{{ idle_mode }}"
+              hvac_mode: "{{ resting_mode }}"
   # Never send fan commands toward an off unit — set_fan_mode WAKES a sleeping
   # minisplit into fan_only. Ladder applies in cool; normalization only when
   # idling in fan_only (heat is on anyway, so normalizing there is safe too).
   - if: >-
       {{ head_fan != desired_fan
          and (desired_mode in ['cool', 'heat']
-              or (desired_mode == 'idle' and idle_mode == 'fan_only')) }}
+              or (desired_mode == 'idle' and idle_mode == 'fan_only' and resting_mode != 'dry')) }}
     then:
       - action: climate.set_fan_mode
         target:
