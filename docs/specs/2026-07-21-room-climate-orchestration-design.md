@@ -211,6 +211,22 @@ stand in until CrowPanel 2.1" knobs go on the walls — then repoint the dial in
 orchestrator change. "Lake Climate" dashboard at `/lake-climate`. Weather:
 `weather.forecast_home`.
 
+## Heat season gating (amended 2026-08-03 after a bug)
+
+Symptom: Sioux Falls main floor heat-flapped (heat↔fan_only, rapid) on cool summer
+mornings. Cause: the heat branch was gated only by outdoor temp (20–60 °F), so a pre-dawn
+dip below 60 °F armed heat-pump heat in August while the family wanted cooling — the
+"seasonal ambiguity" from design time, biting in summer. Fix: heat is now gated by an
+explicit season signal, not a temperature both seasons share. New optional input
+`heat_enable` (input_boolean): if set, heat allowed only while it is on; if unset, heat
+follows the **dial thermostat's mode** (allowed only when the dial is in `heat`) — which the
+Summer/Winter scripts already flip, so summer = no heat automatically. A plain-number dial
+(the lake) with no `heat_enable` never heats. This is blueprint v1.4; both houses now run it
+(Sioux Falls was resynced from the repo at the same time).
+
+Lake winter TODO: to enable heat at the lake, create an `input_boolean` and wire it to each
+`lakeclimate_*` instance's `heat_enable`.
+
 ## Open items
 
 - Measure each head's calibration offset (head reading vs wall reading) after a few
