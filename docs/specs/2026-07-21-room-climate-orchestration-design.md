@@ -238,9 +238,12 @@ more than that far below target — preventing the overcool problem. Per-room in
 (default 3), `dry_temp_floor` (default 2). Enabled on both houses at threshold 55% (aggressive),
 2°F floor. Status shows `dry` and `rh NN`.
 
-Humidity sensor wiring: Lake Master `…_humidity_3`, Guest `…_humidity`, Great Room Shelly.
-SF Main Floor `living_room…_humidity_air`, Master `masterbedroom_humidity`, Margaret
-`margaret_humi_humidity`, Will `kidsroom_humidity` (**assumption — verify KidsRoom == Will's room**).
+Humidity sensor wiring — **prefer the room's wall thermostat's humidity if it reports it**;
+**never use YoLink sensors for Sioux Falls (YoLink cloud is on both HAs but all YoLink hardware
+is at the lake)**. Lake: Master `…_humidity_3`, Guest `…_humidity`, Great Room Shelly (all real
+in-room lake devices). SF: Main Floor `living_room…_humidity_air` (Honeywell T6 wall thermostat);
+Master and Will DISABLED (Zen thermostats report no humidity, no local sensor); Margaret
+`margaret_humi_humidity` (in-room VeSync, her Zen has none).
 
 **Gotcha fixed in v1.5:** HA coerces `variables:` template results to native types, so a
 `"{% ... %}{{ x > y }}{% ... %}"` boolean renders as a native `bool`, not the string "True".
