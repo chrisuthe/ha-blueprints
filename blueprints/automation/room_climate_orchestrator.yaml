@@ -292,7 +292,9 @@ actions:
       outdoor: "{{ state_attr(weather_ent, 'temperature') }}"
       offset: "{{ states(offset_entity) | float(0) }}"
       eff: "{{ dial | float(0) + offset }}"
-      heat_allowed: "{% if heat_enable_list | count > 0 %}{{ is_state(heat_enable_list[0], 'on') }}{% elif dial_is_climate %}{{ is_state(dial_entity, 'heat') }}{% else %}False{% endif %}"
+      heat_allowed: >-
+        {{ (heat_enable_list | count > 0 and is_state(heat_enable_list[0], 'on'))
+           or (heat_enable_list | count == 0 and dial_is_climate and is_state(dial_entity, 'heat')) }}
       desired_mode: >-
         {%- if dial in [none, 'unknown', 'unavailable'] or room in [none, 'unknown', 'unavailable'] or outdoor is none -%} none
         {%- elif dial | float(0) < 40 or room | float(0) < 40 -%} none
@@ -302,7 +304,7 @@ actions:
           {%- elif head_mode == 'cool' and room | float > eff - 0.5 -%} cool
           {%- else -%} idle
           {%- endif -%}
-        {%- elif heat_allowed == 'True' and outdoor | float >= hp_floor | float and outdoor | float < hp_max | float -%}
+        {%- elif heat_allowed and outdoor | float >= hp_floor | float and outdoor | float < hp_max | float -%}
           {%- if room | float <= eff + 0.5 -%} heat
           {%- elif head_mode == 'heat' and room | float < eff + hp_offset | float + 0.5 -%} heat
           {%- else -%} idle
@@ -327,8 +329,11 @@ actions:
         {%- else -%} auto
         {%- endif -%}
       humidity: "{% if humidity_list | count > 0 %}{{ (humidity_list | map('states') | map('float', 0) | sum) / (humidity_list | count) }}{% else %}0{% endif %}"
-      humid_high: "{% if humidity_list | count == 0 %}False{% elif head_mode == 'dry' %}{{ humidity | float(0) > (humidity_threshold | float - humidity_hyst | float) }}{% else %}{{ humidity | float(0) > humidity_threshold | float }}{% endif %}"
-      resting_mode: "{% if humid_high == 'True' and room | float(0) >= eff - dry_floor | float %}dry{% else %}{{ idle_mode }}{% endif %}"
+      humid_high: >-
+        {{ humidity_list | count > 0
+           and ( (head_mode == 'dry' and humidity | float(0) > humidity_threshold | float - humidity_hyst | float)
+                 or (head_mode != 'dry' and humidity | float(0) > humidity_threshold | float) ) }}
+      resting_mode: "{% if humid_high and room | float(0) >= eff - dry_floor | float %}dry{% else %}{{ idle_mode }}{% endif %}"
   - action: input_text.set_value
     target:
       entity_id: !input status_helper
