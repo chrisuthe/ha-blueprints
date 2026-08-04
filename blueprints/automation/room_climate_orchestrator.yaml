@@ -64,14 +64,28 @@ blueprint:
           max: 5
           step: 0.5
           unit_of_measurement: "°F"
-    cool_outdoor_floor:
-      name: Minimum outdoor temperature for cooling (°F)
-      default: 60
+    heat_cutover:
+      name: Heat/cool cutover outdoor temp (°F)
+      description: >
+        Outdoor temperature dividing the two regimes. Below it (minus hysteresis) the room
+        heats toward setpoint; above it (plus hysteresis) it cools; between, the active regime
+        holds. Heat and cool are mutually exclusive, so they never fight.
+      default: 62
       selector:
         number:
           min: 40
           max: 80
           step: 1
+    cutover_hysteresis:
+      name: Cutover hysteresis (°F)
+      description: Dead-zone half-width around the cutover; the active regime holds within it.
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°F"
     cool_target_offset:
       name: Cool target offset (°F relative to dial)
       description: >
@@ -101,15 +115,18 @@ blueprint:
           min: -20
           max: 50
           step: 1
-    hp_outdoor_max:
-      name: Maximum outdoor temperature for heat-pump heat (°F)
-      description: Keep equal to the cooling floor so heat and cool are never armed together.
-      default: 60
+    heat_band:
+      name: Heating entry band (°F below dial)
+      description: >
+        In the heat regime, heat engages only when the room is this far below setpoint, then
+        runs up to setpoint. Together with cool_band this forms the comfort deadband.
+      default: 1.0
       selector:
         number:
-          min: 40
-          max: 80
-          step: 1
+          min: 0.5
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°F"
     fan_auto_band:
       name: Fan auto band (°F)
       description: While cooling, fan stays on auto when the room is within this many degrees of the effective target.
@@ -268,11 +285,12 @@ actions:
       humidity_hyst: !input humidity_hysteresis
       dry_floor: !input dry_temp_floor
       cool_band: !input cool_band
-      cool_floor: !input cool_outdoor_floor
+      heat_band: !input heat_band
+      heat_cutover: !input heat_cutover
+      cutover_hyst: !input cutover_hysteresis
       cool_target_offset: !input cool_target_offset
       hp_offset: !input hp_offset
       hp_floor: !input hp_outdoor_floor
-      hp_max: !input hp_outdoor_max
       cal: !input calibration_offset
       idle_mode: !input idle_mode
       fan_auto_band: !input fan_auto_band
@@ -293,20 +311,31 @@ actions:
       offset: "{{ states(offset_entity) | float(0) }}"
       eff: "{{ dial | float(0) + offset }}"
       heat_allowed: >-
-        {{ (heat_enable_list | count > 0 and is_state(heat_enable_list[0], 'on'))
-           or (heat_enable_list | count == 0 and dial_is_climate and is_state(dial_entity, 'heat')) }}
+        {{ heat_enable_list | count == 0 or is_state(heat_enable_list[0], 'on') }}
+      dial_off: "{{ dial_is_climate and states(dial_entity) == 'off' }}"
+      regime: >-
+        {%- set o = outdoor | float(-999) -%}
+        {%- if o < hp_floor | float -%} toocold
+        {%- elif o <= heat_cutover | float - cutover_hyst | float -%} heat
+        {%- elif o >= heat_cutover | float + cutover_hyst | float -%} cool
+        {%- elif head_mode == 'heat' -%} heat
+        {%- elif head_mode == 'cool' -%} cool
+        {%- elif o < heat_cutover | float -%} heat
+        {%- else -%} cool
+        {%- endif -%}
       desired_mode: >-
         {%- if dial in [none, 'unknown', 'unavailable'] or room in [none, 'unknown', 'unavailable'] or outdoor is none -%} none
         {%- elif dial | float(0) < 40 or room | float(0) < 40 -%} none
         {%- elif head_mode in ['unavailable', 'unknown'] -%} none
-        {%- elif outdoor | float >= cool_floor | float -%}
-          {%- if room | float >= eff + cool_band | float -%} cool
-          {%- elif head_mode == 'cool' and room | float > eff - 0.5 -%} cool
+        {%- elif dial_off -%} idle
+        {%- elif regime == 'heat' and heat_allowed -%}
+          {%- if room | float <= eff - heat_band | float -%} heat
+          {%- elif head_mode == 'heat' and room | float < eff -%} heat
           {%- else -%} idle
           {%- endif -%}
-        {%- elif heat_allowed and outdoor | float >= hp_floor | float and outdoor | float < hp_max | float -%}
-          {%- if room | float <= eff + 0.5 -%} heat
-          {%- elif head_mode == 'heat' and room | float < eff + hp_offset | float + 0.5 -%} heat
+        {%- elif regime == 'cool' -%}
+          {%- if room | float >= eff + cool_band | float -%} cool
+          {%- elif head_mode == 'cool' and room | float > eff -%} cool
           {%- else -%} idle
           {%- endif -%}
         {%- else -%} idle
@@ -333,7 +362,7 @@ actions:
         {{ humidity_list | count > 0
            and ( (head_mode == 'dry' and humidity | float(0) > humidity_threshold | float - humidity_hyst | float)
                  or (head_mode != 'dry' and humidity | float(0) > humidity_threshold | float) ) }}
-      resting_mode: "{% if humid_high and room | float(0) >= eff - dry_floor | float %}dry{% else %}{{ idle_mode }}{% endif %}"
+      resting_mode: "{% if humid_high and not dial_off and room | float(0) >= eff - dry_floor | float %}dry{% else %}{{ idle_mode }}{% endif %}"
   - action: input_text.set_value
     target:
       entity_id: !input status_helper
