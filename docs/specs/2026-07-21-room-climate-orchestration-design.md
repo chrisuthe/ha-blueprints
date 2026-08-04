@@ -251,6 +251,30 @@ Comparing it with `== 'True'` never matches. Write such flags as pure `{{ ... }}
 expressions and use them directly (`{% if flag %}`). This also fixed a latent bug where the
 heat gate (`heat_allowed == 'True'`) would have blocked all winter heating.
 
+## Outdoor-arbitrated regime + comfort deadband (v1.6, 2026-08-03) — supersedes v1.4 heat gate
+
+The strict "heat only when the dial is in heat mode" gate (v1.4) was too strict: it blocked
+heat on cool summer mornings, leaving rooms cold (and the lake, with number dials, could
+never heat). Replaced with outdoor-temperature arbitration:
+
+- **Regime by outdoor temp** (`heat_cutover` default 62, `cutover_hysteresis` default 1):
+  outdoor ≤ 61 → HEAT regime (heat toward setpoint, cooling blocked); ≥ 63 → COOL regime
+  (cool toward setpoint, heat blocked); 61–63 → hold the active regime. Below `hp_outdoor_floor`
+  (20) → idle (too cold for the heat pump). Heat and cool are mutually exclusive by outdoor
+  temp, so they can never fight — the structural anti-bounce guarantee.
+- **Comfort deadband** (`heat_band` + `cool_band`, both 1°F): within a regime, heat engages only
+  when room ≤ setpoint − heat_band and runs up to setpoint; cool engages only when room ≥
+  setpoint + cool_band and runs down to setpoint. The room floats in a ~2° band without hunting.
+- **Mode-hold**: once heating, keep heating until room reaches setpoint; likewise cooling.
+- The dial's cool/heat *mode* no longer gates direction (outdoor does). A dial set to **off**
+  still disables that room (`dial_off` → idle, no dry). `heat_enable` is retained as an optional
+  hard "never heat this room" override (if set and off, heat is blocked regardless of outdoor).
+- Applies to both houses uniformly — the lake now heats on cold mornings automatically, no
+  separate heat-enable needed. Removed inputs: `cool_outdoor_floor`, `hp_outdoor_max`.
+
+Verified live on a 49–59°F morning: all rooms below setpoint heated, rooms at/above idled,
+none cooled; no bouncing.
+
 ## Open items
 
 - Measure each head's calibration offset (head reading vs wall reading) after a few
