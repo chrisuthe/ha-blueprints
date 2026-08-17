@@ -65,20 +65,35 @@ blueprint:
           step: 0.5
           unit_of_measurement: "°F"
     heat_cutover:
-      name: Heat/cool cutover outdoor temp (°F)
+      name: Heat changeover outdoor temp (°F)
       description: >
-        Outdoor temperature dividing the two regimes. Below it (minus hysteresis) the room
-        heats toward setpoint; above it (plus hysteresis) it cools; between, the active regime
-        holds. Heat and cool are mutually exclusive, so they never fight.
+        Heating is allowed only at/below this outdoor temperature. Cooling is ALWAYS available
+        regardless of outdoor temp. Lower = heat rarely (fall, when the house holds excess heat
+        from hot days); higher = heat readily (spring, when it stays cold all day). Overridden
+        live by the helper below when set.
       default: 62
       selector:
         number:
           min: 40
           max: 80
           step: 1
+    heat_cutover_number:
+      name: Heat changeover helper (optional, live-adjustable)
+      description: >
+        Optional input_number/number that overrides the static value above, so the changeover
+        can be slid seasonally from a dashboard. Empty = use the static value.
+      default: []
+      selector:
+        entity:
+          domain:
+            - input_number
+            - number
+          multiple: true
     cutover_hysteresis:
-      name: Cutover hysteresis (°F)
-      description: Dead-zone half-width around the cutover; the active regime holds within it.
+      name: Heat changeover hysteresis (°F)
+      description: >
+        Heating starts below (changeover − this) and continues until outdoor rises above
+        (changeover + this) — prevents heat flapping as the outdoor temp crosses the changeover.
       default: 1
       selector:
         number:
@@ -280,6 +295,7 @@ actions:
       status_entity: !input status_helper
       room_sensor_list: !input room_sensor
       heat_enable_list: !input heat_enable
+      cutover_number_list: !input heat_cutover_number
       humidity_list: !input humidity_sensor
       humidity_threshold: !input humidity_threshold
       humidity_hyst: !input humidity_hysteresis
@@ -313,31 +329,18 @@ actions:
       heat_allowed: >-
         {{ heat_enable_list | count == 0 or is_state(heat_enable_list[0], 'on') }}
       dial_off: "{{ dial_is_climate and states(dial_entity) == 'off' }}"
-      regime: >-
-        {%- set o = outdoor | float(-999) -%}
-        {%- if o < hp_floor | float -%} toocold
-        {%- elif o <= heat_cutover | float - cutover_hyst | float -%} heat
-        {%- elif o >= heat_cutover | float + cutover_hyst | float -%} cool
-        {%- elif head_mode == 'heat' -%} heat
-        {%- elif head_mode == 'cool' -%} cool
-        {%- elif o < heat_cutover | float -%} heat
-        {%- else -%} cool
-        {%- endif -%}
+      eff_cutover: >-
+        {{ states(cutover_number_list[0]) | float(heat_cutover | float) if cutover_number_list | count > 0 else heat_cutover | float }}
+      heat_ok_outdoor: >-
+        {{ outdoor | float(-999) >= hp_floor | float
+           and outdoor | float(-999) <= (eff_cutover | float + cutover_hyst | float if head_mode == 'heat' else eff_cutover | float - cutover_hyst | float) }}
       desired_mode: >-
         {%- if dial in [none, 'unknown', 'unavailable'] or room in [none, 'unknown', 'unavailable'] or outdoor is none -%} none
         {%- elif dial | float(0) < 40 or room | float(0) < 40 -%} none
         {%- elif head_mode in ['unavailable', 'unknown'] -%} none
         {%- elif dial_off -%} idle
-        {%- elif regime == 'heat' and heat_allowed -%}
-          {%- if room | float <= eff - heat_band | float -%} heat
-          {%- elif head_mode == 'heat' and room | float < eff -%} heat
-          {%- else -%} idle
-          {%- endif -%}
-        {%- elif regime == 'cool' -%}
-          {%- if room | float >= eff + cool_band | float -%} cool
-          {%- elif head_mode == 'cool' and room | float > eff -%} cool
-          {%- else -%} idle
-          {%- endif -%}
+        {%- elif room | float >= eff + cool_band | float or (head_mode == 'cool' and room | float > eff) -%} cool
+        {%- elif heat_allowed and heat_ok_outdoor and (room | float <= eff - heat_band | float or (head_mode == 'heat' and room | float < eff)) -%} heat
         {%- else -%} idle
         {%- endif -%}
       desired_target: >-
