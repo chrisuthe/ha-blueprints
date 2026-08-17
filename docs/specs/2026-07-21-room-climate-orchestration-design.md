@@ -275,6 +275,25 @@ never heat). Replaced with outdoor-temperature arbitration:
 Verified live on a 49–59°F morning: all rooms below setpoint heated, rooms at/above idled,
 none cooled; no bouncing.
 
+## v1.7 — cooling always available; heating on a live changeover (2026-08-07) — supersedes v1.6 regime
+
+Real-world failure: on a cool night (outdoor fell to 56–60°F) the master bedroom drifted to 71°F
+(3° over its 68 setpoint) because v1.6's outdoor **regime** put the house in "heat regime" and
+*blocked cooling* — but with windows closed, cool outdoor air never reaches a sealed, occupied
+bedroom, so the AC should have run. The minisplit sat in fan_only the whole time (heat never ran).
+
+Fix — asymmetric gating: **cooling is ALWAYS available** (cool whenever room ≥ setpoint + cool_band,
+regardless of outdoor); **only heating is seasonal** (heat when room ≤ setpoint − heat_band AND
+outdoor ≤ the changeover, with hysteresis). The ±1° deadband + mode-hold already prevent heat/cool
+bouncing, so the outdoor mutual-exclusion of v1.6 was unnecessary and was strangling the AC.
+
+The changeover is **live-adjustable**: new optional `heat_cutover_number` input (an input_number)
+overrides the static `heat_cutover`. Sioux Falls wired to `input_number.climate_heat_changeover`
+(default 62°F, slider on the Climate dashboard). Slide it **lower in fall** (hot days leave the house
+with excess heat — don't start heating on a cool evening) and **higher in spring** (cold all day —
+heat readily). Removed the `regime` variable. Verified live: master resumed cooling at 69 instead of
+locking out. Lake runs v1.7 too (static changeover, cooling now always available there as well).
+
 ## Open items
 
 - Measure each head's calibration offset (head reading vs wall reading) after a few
